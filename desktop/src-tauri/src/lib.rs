@@ -485,16 +485,16 @@ fn item_image(hub: TState<'_, Shared>, id: String) -> Result<String, String> {
     Ok(format!("data:{};base64,{}", mime, b64))
 }
 
-// Files from the phone must not be launched as programs.
-const BLOCKED_EXT: &[&str] = &[
-    "exe", "msi", "bat", "cmd", "com", "scr", "ps1", "vbs", "js", "jar", "lnk", "reg", "dll", "sh", "app", "apk",
+// Only media and documents may be opened directly. Everything else must be saved first.
+const OPENABLE_EXT: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "heic", "mp4", "mov", "webm", "mkv", "3gp", "pdf", "txt",
 ];
 
 #[tauri::command]
 fn open_item(app: tauri::AppHandle, hub: TState<'_, Shared>, id: String) -> Result<(), String> {
     let path = item_path(&hub, &id)?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    if BLOCKED_EXT.contains(&ext.as_str()) {
+    if !OPENABLE_EXT.contains(&ext.as_str()) {
         return Err("This file type can't be opened for safety. Use Save instead.".into());
     }
     app.opener()
@@ -624,22 +624,38 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 fn is_public_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
-            !(v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_unspecified()
+            let o = v4.octets();
+            !(o[0] == 0                                  // 0.0.0.0/8
+                || v4.is_private()                       // 10/8, 172.16/12, 192.168/16
+                || v4.is_loopback()                      // 127/8
+                || v4.is_link_local()                    // 169.254/16 (cloud metadata)
                 || v4.is_broadcast()
-                || v4.is_multicast())
+                || v4.is_multicast()
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)  // 100.64/10 carrier NAT
+                || (o[0] == 198 && (o[1] & 0xfe) == 18)  // 198.18/15 benchmarking
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0) // 192.0.0/24 IETF
+                || o[0] >= 240)                          // 240/4 reserved
         }
         std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
+            let s = v6.segments();
+            // IPv4 carried inside IPv6 (mapped, compatible, NAT64): check the IPv4 part.
+            let embedded = if s[..5] == [0, 0, 0, 0, 0] && (s[5] == 0 || s[5] == 0xffff) {
+                Some([s[6], s[7]])
+            } else if s[0] == 0x64 && s[1] == 0xff9b {
+                Some([s[6], s[7]])
+            } else {
+                None
+            };
+            if let Some([hi, lo]) = embedded {
+                let v4 = std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8);
                 return is_public_ip(std::net::IpAddr::V4(v4));
             }
-            let s = v6.segments();
             !(v6.is_loopback()
                 || v6.is_unspecified()
-                || (s[0] & 0xfe00) == 0xfc00
-                || (s[0] & 0xffc0) == 0xfe80)
+                || v6.is_multicast()
+                || (s[0] & 0xfe00) == 0xfc00   // fc00::/7 unique local
+                || (s[0] & 0xffc0) == 0xfe80   // fe80::/10 link local
+                || s[0] == 0x2002)             // 6to4 tunnels
         }
     }
 }
@@ -661,10 +677,13 @@ async fn link_preview(url: String) -> Result<Preview, String> {
     }
     // Link sites serve their preview tags to link-preview bots, so identify as one.
     // Redirects are not followed, so a public link cannot bounce the request to a private address.
+    // Connect only to the addresses checked above, so DNS cannot change between check and request.
     let client = reqwest::Client::builder()
         .user_agent("facebookexternalhit/1.1")
         .timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .resolve_to_addrs(&host, &addrs)
         .build()
         .map_err(|e| e.to_string())?;
     let html = client
