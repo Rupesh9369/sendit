@@ -283,6 +283,17 @@ async fn post_ack(State(hub): State<Shared>, h: HeaderMap, Path(id): Path<String
     StatusCode::OK
 }
 
+async fn require_token(
+    State(hub): State<Shared>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if req.uri().path() == "/api/ping" || authed(&hub, req.headers()) {
+        return next.run(req).await;
+    }
+    StatusCode::UNAUTHORIZED.into_response()
+}
+
 async fn serve(hub: Shared) {
     let router = Router::new()
         .route("/api/ping", get(ping))
@@ -291,6 +302,8 @@ async fn serve(hub: Shared) {
         .route("/api/outbox", get(get_outbox))
         .route("/api/file/{id}", get(get_file))
         .route("/api/ack/{id}", post(post_ack))
+        // Reject unauthenticated requests before any request body is read.
+        .layer(axum::middleware::from_fn_with_state(hub.clone(), require_token))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024 * 1024))
         .with_state(hub);
     match tokio::net::TcpListener::bind(("0.0.0.0", PORT)).await {
@@ -472,9 +485,18 @@ fn item_image(hub: TState<'_, Shared>, id: String) -> Result<String, String> {
     Ok(format!("data:{};base64,{}", mime, b64))
 }
 
+// Files from the phone must not be launched as programs.
+const BLOCKED_EXT: &[&str] = &[
+    "exe", "msi", "bat", "cmd", "com", "scr", "ps1", "vbs", "js", "jar", "lnk", "reg", "dll", "sh", "app", "apk",
+];
+
 #[tauri::command]
 fn open_item(app: tauri::AppHandle, hub: TState<'_, Shared>, id: String) -> Result<(), String> {
     let path = item_path(&hub, &id)?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if BLOCKED_EXT.contains(&ext.as_str()) {
+        return Err("This file type can't be opened for safety. Use Save instead.".into());
+    }
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -598,15 +620,51 @@ fn attr(tag: &str, name: &str) -> Option<String> {
     Some(tag[start..end].to_string())
 }
 
+// Addresses a link preview must never reach: this PC, the local network, and link-local ranges.
+fn is_public_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast())
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public_ip(std::net::IpAddr::V4(v4));
+            }
+            let s = v6.segments();
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || (s[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xffc0) == 0xfe80)
+        }
+    }
+}
+
 #[tauri::command]
 async fn link_preview(url: String) -> Result<Preview, String> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "Not a valid link".to_string())?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("Not a web link".into());
     }
+    let host = parsed.host_str().ok_or("Link has no host")?.to_string();
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| e.to_string())?
+        .collect();
+    if addrs.is_empty() || addrs.iter().any(|a| !is_public_ip(a.ip())) {
+        return Err("Link points to a private address".into());
+    }
     // Link sites serve their preview tags to link-preview bots, so identify as one.
+    // Redirects are not followed, so a public link cannot bounce the request to a private address.
     let client = reqwest::Client::builder()
         .user_agent("facebookexternalhit/1.1")
         .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| e.to_string())?;
     let html = client
