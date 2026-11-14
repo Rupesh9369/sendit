@@ -1,0 +1,31 @@
+# Dependencies and generated native projects
+node_modules/
+mobile/android/
+mobile/ios/
+mobile/.expo/
+desktop/dist/
+
+# Build output
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+dist/
+*.apk
+*.aab
+*.exe
+*.msi
+
+# Signing and local secrets
+*.keystore
+*.jks
+.env
+.env.*
+mobile/android/app/debug.keystore
+
+# Local data and tools
+db.json
+*.log
+.claude/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

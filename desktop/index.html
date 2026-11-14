@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Sendit</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <header class="top">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 512 512" aria-hidden="true">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#6366F1" />
+              <stop offset="1" stop-color="#A855F7" />
+            </linearGradient>
+          </defs>
+          <rect width="512" height="512" rx="116" fill="url(#g)" />
+          <path d="M116 256 L396 136 L304 392 L256 306 Z" fill="#FFFFFF" />
+          <path d="M396 136 L256 306" fill="none" stroke="#A855F7" stroke-width="18" stroke-linejoin="round" />
+        </svg>
+        <span class="name">Sendit</span>
+      </div>
+      <div class="pair-wrap">
+        <button type="button" id="pair-btn" class="pair-btn">
+          <span id="dot" class="dot"></span>
+          <span id="pair-label">Phone not connected</span>
+        </button>
+        <section id="pair-card" class="pair-card" hidden>
+          <div id="qr" class="qr"></div>
+          <div class="pair-info">
+            <p class="pair-title">Connect your phone</p>
+            <p class="pair-sub">Same Wi-Fi. Scan this code in the Sendit app.</p>
+            <div class="link-row">
+              <code id="pair-link"></code>
+              <button type="button" id="copy-link" class="btn-ghost small">Copy</button>
+            </div>
+            <p id="pair-ip" class="pair-sub"></p>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <p class="label">Folders</p>
+        <nav id="folders" class="folders"></nav>
+        <form id="folder-form" class="folder-form" hidden>
+          <input id="folder-name" placeholder="Folder name" autocomplete="off" />
+          <button type="submit" class="btn-primary small">Add</button>
+        </form>
+        <button type="button" id="new-folder" class="btn-ghost link">+ New folder</button>
+      </aside>
+
+      <div class="content">
+        <section class="composer">
+          <form id="text-form" class="text-form">
+            <input id="text" placeholder="Send text or a link to your phone" autocomplete="off" />
+            <button type="submit" class="btn-primary">Send</button>
+          </form>
+          <button type="button" id="file-btn" class="btn-ghost">Send file</button>
+        </section>
+
+        <p id="heading" class="heading"></p>
+        <p id="empty" class="empty" hidden>Nothing here yet. Send something to your phone, or share from your phone to this PC.</p>
+        <main id="board" class="board"></main>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden>
+      <span id="toast-text"></span>
+      <button type="button" id="undo">Undo</button>
+    </div>
+  </body>
+</html>
